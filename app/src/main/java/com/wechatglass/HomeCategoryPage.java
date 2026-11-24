@@ -43,6 +43,11 @@ final class HomeCategoryPage extends FrameLayout {
         void open(String action);
     }
 
+    /** Long-press forwards to WeChat's own conversation menu (no DB writes). */
+    interface LongPress {
+        boolean open(String username);
+    }
+
     private final ListView list;
     private final EntryAdapter adapter = new EntryAdapter();
     private final int topInset;
@@ -52,18 +57,23 @@ final class HomeCategoryPage extends FrameLayout {
     private final int cardBg;
     private final OpenChat openChat;
     private final OpenAction openAction;
+    private final LongPress longPress;
 
     HomeCategoryPage(Context context, boolean night, int topInset, int bottomInset,
-                     OpenChat openChat, final Runnable onPullDown, OpenAction openAction) {
+                     OpenChat openChat, final Runnable onPullDown, OpenAction openAction,
+                     LongPress longPress) {
         super(context);
         this.scheme = M3Theme.colors(context);
         // Sampled from Google Chat's light home: neutral page + card.
-        this.pageBg = scheme.dark ? scheme.surfaceContainer : 0xFFF0EDEF;
-        this.cardBg = scheme.dark ? scheme.surfaceContainerHigh : 0xFFFCF8F9;
+        // Same surfaces as the 通讯录 / 发现 / 我 pages so the four tabs share one
+        // background instead of switching between a grey and a green-tinted page.
+        this.pageBg = scheme.surface;
+        this.cardBg = scheme.surfaceContainerLow;
         this.topInset = topInset;
         this.bottomInset = bottomInset;
         this.openChat = openChat;
         this.openAction = openAction;
+        this.longPress = longPress;
         setBackgroundColor(pageBg);
 
         list = new ListView(context);
@@ -146,6 +156,7 @@ final class HomeCategoryPage extends FrameLayout {
 
         current = this;
     }
+
 
     private static final class Row {
         final ConversationIndex.Entry entry;
@@ -453,6 +464,21 @@ final class HomeCategoryPage extends FrameLayout {
         if (entry == null) {
             return;
         }
+        final String username = entry.username;
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (openChat != null) {
+                    openChat.open(username);
+                }
+            }
+        });
+        row.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                return longPress != null && longPress.open(username);
+            }
+        });
         holder.name.setText(entry.display);
         holder.avatar.setBackgroundColor(colorFor(entry.username));
         applyAvatarShape(holder.avatar);

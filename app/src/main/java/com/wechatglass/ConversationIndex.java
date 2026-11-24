@@ -22,6 +22,15 @@ final class ConversationIndex {
     static final class Entry {
         String username = "";
         String display = "";
+        /** WeChat's own pinyin initials (rcontact.pyInitial), used for A–Z. */
+        String pyInitial = "";
+        /** Pinyin of the remark (rcontact.conRemarkPYFull) when one exists. */
+        String remarkPy = "";
+
+        /** Sort key: the remark's pinyin when there is a remark, else the nickname's. */
+        String sortKey() {
+            return remarkPy == null || remarkPy.isEmpty() ? safe(pyInitial) : remarkPy;
+        }
         boolean group;
         boolean hasConversation;
         /** WeChat pins a conversation with this bit in rconversation.flag. */
@@ -38,6 +47,9 @@ final class ConversationIndex {
     private static volatile int version;
     /** Conversation storage handle, cached so refresh() re-queries without re-resolving. */
     private static Object conversationDb;
+    /** Read-only contact DB handle, kept only for the P0 column probe. */
+    /** Logged-in account, excluded from the contacts list. */
+    private static volatile String selfUsername = "";
 
     private ConversationIndex() {
     }
@@ -109,14 +121,16 @@ final class ConversationIndex {
             // type & 1 != 0, type & 32 == 0, type & 8 == 0,
             // verifyFlag & 8 == 0, deleteFlag == 0, and not a chatroom.
             List<Entry> friends = queryContacts(contactDb,
-                    "select username, nickname, conRemark from rcontact"
+                    "select username, nickname, conRemark, pyInitial, conRemarkPYFull"
+                            + " from rcontact"
                             + " where (type & 1 != 0) and type & 32 = 0"
                             + " and type & 8 = 0 and verifyFlag & 8 = 0"
                             + " and deleteFlag = 0"
                             + " and username not like '%@chatroom'"
                             + " and username not like '%@im.chatroom'"
                             + " and username not like 'gh_%'"
-                            + " and username not like '%@%'");
+                            + " and username not like '%@%'"
+                            + " order by pyInitial asc");
             // Chatrooms live in rcontact as '%@chatroom'; the separate chatroom
             // table only keeps the rooms WeChat still tracks. This catches the
             // ones we already left as well.
@@ -129,7 +143,13 @@ final class ConversationIndex {
             FRIENDS.clear();
             GROUPS.clear();
             SYSTEM.clear();
+            selfUsername = querySelfUsername(contactDb);
             for (Entry e : friends) {
+                // rcontact contains the logged-in account itself; the contacts
+                // page must not list "me" as a friend.
+                if (e.username.equals(selfUsername)) {
+                    continue;
+                }
                 Entry conv = conversations.get(e.username);
                 if (conv != null) {
                     e.hasConversation = true;
@@ -175,6 +195,11 @@ final class ConversationIndex {
                 e.pinned = conv.pinned;
                 SYSTEM.add(e);
             }
+            // A system account can arrive twice: once from rcontact (it is a
+            // friend too) and once from its conversation row. Keep one row.
+            dedupe(FRIENDS);
+            dedupe(GROUPS);
+            dedupe(SYSTEM);
             version++;
             loaded = true;
             android.util.Log.i("WeChatGlass", "HL index friends=" + FRIENDS.size()
@@ -265,6 +290,7 @@ final class ConversationIndex {
                 int userCol = cursor.getColumnIndex("username");
                 int nickCol = cursor.getColumnIndex("nickname");
                 int remarkCol = cursor.getColumnIndex("conRemark");
+                int pyCol = cursor.getColumnIndex("pyInitial");
                 while (cursor.moveToNext()) {
                     String username = cursor.getString(userCol);
                     if (username == null || username.isEmpty()) {
@@ -277,6 +303,11 @@ final class ConversationIndex {
                     e.display = remark != null && !remark.isEmpty() ? remark : nick;
                     if (e.display == null || e.display.isEmpty()) {
                         e.display = username;
+                    }
+                    e.pyInitial = pyCol >= 0 ? cursor.getString(pyCol) : "";
+                    int remarkPyCol = cursor.getColumnIndex("conRemarkPYFull");
+                    if (remarkPyCol >= 0 && remark != null && !remark.isEmpty()) {
+                        e.remarkPy = cursor.getString(remarkPyCol);
                     }
                     out.add(e);
                 }
@@ -454,7 +485,14 @@ final class ConversationIndex {
         if (trimmed.matches("[0-9a-fA-F]{24,}")) {
             return null; // media/msg hash, not human-readable text
         }
-        return trimmed;
+        // Group digests can be "%s: message" — the sender name is not available
+        // at this layer, so drop the placeholder instead of showing it.
+        String text = trimmed.replace("%s:", "").replace("%s：", "")
+                .replace("%s", "").trim();
+        while (text.startsWith(":") || text.startsWith("：")) {
+            text = text.substring(1).trim();
+        }
+        return text;
     }
 
     private static String systemName(String username) {
@@ -502,6 +540,68 @@ final class ConversationIndex {
     static List<Entry> friends() {
         return FRIENDS;
     }
+
+    /** Own wxid, read from userinfo (id=2/type=3); empty until load(). */
+    static String selfUsername() {
+        return selfUsername;
+    }
+
+    /** Friends sorted A–Z by the visible name: remark pinyin first, else nickname. */
+    static List<Entry> contacts() {
+        List<Entry> copy = new ArrayList<>(FRIENDS);
+        java.util.Collections.sort(copy, new java.util.Comparator<Entry>() {
+            @Override
+            public int compare(Entry a, Entry b) {
+                int byPy = a.sortKey().compareToIgnoreCase(b.sortKey());
+                if (byPy != 0) {
+                    return byPy;
+                }
+                return safe(a.display).compareToIgnoreCase(safe(b.display));
+            }
+        });
+        return copy;
+    }
+
+    /** Removes duplicate usernames, keeping the first (already-updated) entry. */
+    private static void dedupe(List<Entry> list) {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = list.size() - 1; i >= 0; i--) {
+            String username = list.get(i).username;
+            if (username != null && !seen.add(username)) {
+                list.remove(i);
+            }
+        }
+    }
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String querySelfUsername(Object db) {
+        Cursor cursor = null;
+        try {
+            cursor = (Cursor) de.robv.android.xposed.XposedHelpers.callMethod(
+                    db, "A", "select value from userinfo where id=2 and type=3 limit 1", null);
+            if (cursor != null && cursor.moveToFirst()) {
+                String value = cursor.getString(0);
+                return value == null ? "" : value;
+            }
+        } catch (Throwable throwable) {
+            android.util.Log.e("WeChatGlass", "self lookup failed", throwable);
+        } finally {
+            if (cursor != null) {
+                try {
+                    cursor.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return "";
+    }
+
+    /**
+     * P0 probe: which columns rcontact actually has, and whether WeChat's own
+     * pinyin columns are populated. Read-only SQL, no writes.
+     */
 
     static List<Entry> groups() {
         return GROUPS;

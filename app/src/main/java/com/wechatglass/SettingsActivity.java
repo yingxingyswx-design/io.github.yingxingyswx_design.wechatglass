@@ -59,6 +59,7 @@ public class SettingsActivity extends Activity {
     private boolean hasResumed;
     private M3Switch monetSwitch;
     private M3Switch messageTimeSwitch;
+    private M3Switch balanceCardSwitch;
     private M3Switch roundAvatarSwitch;
     private M3Switch mediaBubbleSwitch;
     private LinearLayout swatchRow;
@@ -68,6 +69,7 @@ public class SettingsActivity extends Activity {
     // through the config broadcast (same channel as the rest of the settings).
     private static final String KEY_ROUND_AVATAR = "round_avatar";
     private static final String KEY_MEDIA_BUBBLE = "media_bubble";
+    private static final String KEY_BALANCE_CARD = "balance_card";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -106,6 +108,15 @@ public class SettingsActivity extends Activity {
         scroll.addView(root);
         scroll.setClipToPadding(false);
         setContentView(scroll);
+
+        TextView disclaimer = new TextView(this);
+        disclaimer.setText("本模块造成的任何后果，本模块开发者概不负责");
+        disclaimer.setTextSize(20f);
+        disclaimer.setTypeface(android.graphics.Typeface.create(
+                "sans-serif-medium", android.graphics.Typeface.BOLD));
+        disclaimer.setTextColor(scheme.error);
+        disclaimer.setPadding(dp(2), dp(2), dp(2), dp(6));
+        root.addView(disclaimer, lp(-1, -2, 0, 0));
 
         TextView banner = new TextView(this);
         banner.setText("非液态玻璃选项需要微信运行时动态注入！");
@@ -170,7 +181,7 @@ public class SettingsActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         TextView label = new TextView(this);
-        label.setText("开启液态玻璃（增加封号风险）");
+        label.setText("开启液态玻璃");
         label.setTextSize(16f);
         label.setTextColor(onBg);
         LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0,
@@ -248,7 +259,7 @@ public class SettingsActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         roundAvatarSwitch = new M3Switch(this);
         roundAvatarSwitch.setCheckedNoAnim(getSharedPreferences(PREFS, 0)
-                .getBoolean(KEY_ROUND_AVATAR, true));
+                .getBoolean(KEY_ROUND_AVATAR, false));
         roundAvatarSwitch.setOnClickListener(v -> {
             userToggled = true;
             boolean on = !roundAvatarSwitch.isChecked();
@@ -272,7 +283,7 @@ public class SettingsActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         mediaBubbleSwitch = new M3Switch(this);
         mediaBubbleSwitch.setCheckedNoAnim(getSharedPreferences(PREFS, 0)
-                .getBoolean(KEY_MEDIA_BUBBLE, true));
+                .getBoolean(KEY_MEDIA_BUBBLE, false));
         mediaBubbleSwitch.setOnClickListener(v -> {
             userToggled = true;
             boolean on = !mediaBubbleSwitch.isChecked();
@@ -285,7 +296,7 @@ public class SettingsActivity extends Activity {
         root.addView(mediaBubbleRow, lp(-1, -2, 0, dp(8)));
 
         TextView gatedHint = new TextView(this);
-        gatedHint.setText("圆形头像与媒体气泡需先开启 Material Design，否则不可用。");
+        gatedHint.setText("圆形头像、媒体气泡与每条消息时间需先开启 Material Design，否则不可用。");
         gatedHint.setTextSize(13f);
         gatedHint.setTextColor(onVar);
         root.addView(gatedHint, lp(-1, -2, 0, dp(10)));
@@ -319,6 +330,38 @@ public class SettingsActivity extends Activity {
         messageTimeHint.setTextSize(13f);
         messageTimeHint.setTextColor(onVar);
         root.addView(messageTimeHint, lp(-1, -2, 0, dp(16)));
+
+        // 开启余额卡片显示（被动采样，默认关闭，开启前二次确认）
+        LinearLayout balanceRow = new LinearLayout(this);
+        balanceRow.setOrientation(LinearLayout.HORIZONTAL);
+        balanceRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView balanceLabel = new TextView(this);
+        balanceLabel.setText("开启余额卡片显示");
+        balanceLabel.setTextSize(16f);
+        balanceLabel.setTextColor(onBg);
+        balanceRow.addView(balanceLabel, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        balanceCardSwitch = new M3Switch(this);
+        balanceCardSwitch.setCheckedNoAnim(getSharedPreferences(PREFS, 0)
+                .getBoolean(KEY_BALANCE_CARD, false));
+        balanceCardSwitch.setOnClickListener(v -> {
+            if (balanceCardSwitch.isChecked()) {
+                balanceCardSwitch.setCheckedNoAnim(false);
+                getSharedPreferences(PREFS, 0).edit()
+                        .putBoolean(KEY_BALANCE_CARD, false).commit();
+                pushConfig();
+            } else {
+                showBalanceWarning();
+            }
+        });
+        balanceRow.addView(balanceCardSwitch);
+        root.addView(balanceRow, lp(-1, -2, 0, dp(8)));
+
+        TextView balanceHint = new TextView(this);
+        balanceHint.setText("仅对已获取的数据采样，需要手动刷新");
+        balanceHint.setTextSize(13f);
+        balanceHint.setTextColor(onVar);
+        root.addView(balanceHint, lp(-1, -2, 0, dp(16)));
 
         // 动态色彩
         root.addView(section("动态色彩", card, onBg, onVar));
@@ -432,6 +475,7 @@ public class SettingsActivity extends Activity {
                     return;
                 }
                 stateReceived = true;
+                android.util.Log.i("WeChatGlassGui", "STATE received");
                 if (statusInjectValue != null) {
                     setStatusValue(statusInjectValue, "已注入微信", true);
                 }
@@ -537,9 +581,11 @@ public class SettingsActivity extends Activity {
             intent.putExtra("message_time",
                     messageTimeSwitch != null && messageTimeSwitch.isChecked());
             intent.putExtra("round_avatar",
-                    roundAvatarSwitch == null || roundAvatarSwitch.isChecked());
+                    roundAvatarSwitch != null && roundAvatarSwitch.isChecked());
             intent.putExtra("media_bubble",
-                    mediaBubbleSwitch == null || mediaBubbleSwitch.isChecked());
+                    mediaBubbleSwitch != null && mediaBubbleSwitch.isChecked());
+            intent.putExtra("balance_card",
+                    balanceCardSwitch != null && balanceCardSwitch.isChecked());
             sendBroadcast(intent);
         } catch (Throwable ignored) {
         }
@@ -897,11 +943,34 @@ public class SettingsActivity extends Activity {
         return id > 0 ? getResources().getDimensionPixelSize(id) : dp(24);
     }
 
-    /** Keeps the two Material Design dependent switches in sync with the mode. */
+    /** Red warning shown before the balance card can be enabled. */
+    private void showBalanceWarning() {
+        com.wechatglass.m3.M3ColorScheme scheme =
+                com.wechatglass.m3.M3Theme.colors(this);
+        TextView message = new TextView(this);
+        message.setText("开启后会大幅度提高封号风险，如果账号封禁，本模块的开发者概不负责");
+        message.setTextSize(16f);
+        message.setTextColor(scheme.error);
+        int pad = dp(20);
+        message.setPadding(pad, pad, pad, pad);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("警告")
+                .setView(message)
+                .setPositiveButton("仍然开启", (dialog, which) -> {
+                    balanceCardSwitch.setCheckedNoAnim(true);
+                    getSharedPreferences(PREFS, 0).edit()
+                            .putBoolean(KEY_BALANCE_CARD, true).commit();
+                    pushConfig();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+    /** Keeps the Material Design dependent switches in sync with the mode. */
     private void updateM3GatedSwitches() {
         boolean m3 = nativeSwitchField != null && nativeSwitchField.isChecked();
         applyGated(roundAvatarSwitch, m3);
         applyGated(mediaBubbleSwitch, m3);
+        applyGated(messageTimeSwitch, m3);
     }
 
     private void applyGated(M3Switch sw, boolean enabled) {

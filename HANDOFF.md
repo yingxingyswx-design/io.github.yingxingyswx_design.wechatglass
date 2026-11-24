@@ -1,10 +1,45 @@
 # 交接文档（HANDOFF）
 
-> 写于 2026-11-22，上下文已压缩过一次。新对话先读这份，再动代码。
+> 更新于 2026-11-25，**v1.2.1 已发布**。新对话先读这份，再动代码。
 
 ## 0. 一句话现状
 
-微信 8.0.79 的 LSPosed 模块：**默认走微信原生会话列表**（稳定，自带小程序/已登入设备/置顶笔记），顶栏换成悬浮液态玻璃 + 三段切换器；**自建 Material Design 列表是实验开关**（关=原生，开=自建）。下一步：把自建列表按**真正的 M3 Expressive** 重做。
+微信 8.0.79 的 LSPosed 模块，**v1.2.1 已发布**（Store 标准 tag `4-1.2.1`）。已完成：首页液态玻璃顶栏 + 三段切换器、底部液态玻璃导航、聊天页玻璃（面板/输入栏）、媒体/表情消息气泡（面积 +25% / 居中 / 保留尾巴）、每条消息时间胶囊、自建列表未读实时刷新。
+
+**下一步：把「通讯录 / 发现 / 我」三个页面按 M3 Expressive 重做**（首页自建列表已完成，这三页仍是微信原生 UI）。
+
+## 0.1 当前版本与产物
+
+- `versionCode = 4` / `versionName = 1.2.1`；产物 `out/wechat-glass-1.2.1.apk`
+- Store release tag：`4-1.2.1`（Xposed-Modules-Repo 的 bot 会把 `v.x.y` 自动规范成 `<versionCode>-x.y`）
+- 备份仓 `C:\git\wechat_chat_ui` HEAD `ece57ae`，工作树干净；三个仓库都有 v1.2.1
+
+## 0.2 两条硬规则（用户明确要求）
+
+1. **每次编译成功后必须 `.\publish.ps1 -Message "..."` 提交到 `C:\git\wechat_chat_ui`**（生成快照 + commit）。
+2. **任何新增封号风险的 hook 必须先经用户批准**：改方法语义（`setResult`/`invokeOriginalMethod`）、全局/系统类 hook、`hookAllMethods`、触碰消息/账号/DB/网络/支付。只读 UI 属性、本地绘制、在已有 hook 里加分支不需要批准。
+
+## 0.3 环境与设备注意
+
+- 设备 user 0（Henry）/ user 10（壶中界）；测试默认 **user 0**，装包要两个 user 都装。
+- adb 会间歇性掉线：**每次 adb 操作前先 `adb devices`，没设备就停下报告**，不要空等/重试。
+- user 10 的模块状态偶发显示"等待微信回应"（不稳定，已确认注入正常），优先级低。
+- 命令模板：`.gradlew.bat :app:assembleRelease` → `adb push out\wechat-glass-1.2.1.apk /data/local/tmp/wg.apk` → `adb shell pm install -r --user 0 /data/local/tmp/wg.apk`（user 10 同理）。
+
+
+## 0.4 下一步：通讯录 / 发现 / 我 的 M3 化
+
+- 设计依据：`docs/M3E设计规范.md`（四页布局蓝图、组件、分轮 R3/R4/R5）与 `docs/GoogleChat-UI-Spec.md`（尺寸/颜色/圆角基准）。
+- 已完成、可参考的实现：
+  - `HomeGlassHook`：decor 级 overlay、原生 ActionBar 隐藏、列表 padding、`ViewPager.getCurrentItem()` 判页；
+  - `HomeCategoryPage`：自建 ListView、`applyAvatarShape()` 跟随「圆形头像」开关、未读角标实时刷新。
+- 微信侧结构：`LauncherUI` 下 `MainTabUI` / `MoreTabUI`；四个 tab 由 `LauncherUIBottomTabView` 切换，通讯录/发现/我 各占 `WxViewPager` 的一页。
+- 建议路线（低风险优先）：
+  1. 先做「悬浮玻璃顶栏 + 大标题」：复用 `HomeGlassHook` 的 overlay/chip，按当前 ViewPager 页区分；
+  2. 再做列表皮肤：优先给**原生列表**加 padding/圆角/分隔线，而不是自建列表（首页自建列表已被证明成本很高、易抖动）；
+  3. 头像/图标统一走 `applyAvatarShape()` 与 m3 token。
+- 红线：不碰消息/通讯录数据、不写 DB、不改网络与支付；微信类名一律字符串反射。
+- 验收：`docs/M3E设计规范.md` §9 清单（日/夜、Monet 开/关、点击偏移 0、切 tab 10 次无重影）。
 
 ## 1. 仓库与产物
 

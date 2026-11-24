@@ -31,6 +31,7 @@ public class HookEntry implements IXposedHookLoadPackage {
         }
         try {
             hookExactBarVisibility(lpparam);
+            com.wechatglass.WalletBalanceCache.install(lpparam.classLoader);
             hookChatLifecycle(lpparam);
             hookHomeLifecycle(lpparam);
             hookResume(CHATTING_UI, lpparam, true);

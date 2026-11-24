@@ -28,6 +28,7 @@ final class HookConfig {
     static final String KEY_MEDIA_BUBBLE = "media_bubble";
     /** Sender avatars are clipped to circles (only meaningful under Material Design). */
     static final String KEY_ROUND_AVATAR = "round_avatar";
+    static final String KEY_BALANCE_CARD = "balance_card";
     static final int DEFAULT_SEED = 0xFF07C160;
 
     private static final AtomicBoolean REGISTERED = new AtomicBoolean(false);
@@ -52,6 +53,7 @@ final class HookConfig {
                         return;
                     }
                     if (ACTION_QUERY.equals(intent.getAction())) {
+                        android.util.Log.i("WeChatGlassCfg", "QUERY received");
                         Intent reply = new Intent(ACTION_STATE);
                         reply.setPackage("io.github.yingxingyswx_design.wechatglass");
                         reply.putExtra(KEY_GLASS, ctx.getSharedPreferences(PREFS, 0)
@@ -65,7 +67,9 @@ final class HookConfig {
                         reply.putExtra(KEY_MESSAGE_TIME, messageTimeEnabled(ctx));
                         reply.putExtra(KEY_MEDIA_BUBBLE, mediaBubbleEnabled(ctx));
                         reply.putExtra(KEY_ROUND_AVATAR, roundAvatarEnabled(ctx));
+                        reply.putExtra(KEY_BALANCE_CARD, balanceCardEnabled(ctx));
                         ctx.sendBroadcast(reply);
+                        android.util.Log.i("WeChatGlassCfg", "STATE sent");
                         return;
                     }
                     if (!ACTION.equals(intent.getAction())) {
@@ -76,8 +80,9 @@ final class HookConfig {
                     boolean monet = intent.getBooleanExtra(KEY_COLOR_MONET, true);
                     int seed = intent.getIntExtra(KEY_COLOR_SEED, DEFAULT_SEED);
                     boolean messageTime = intent.getBooleanExtra(KEY_MESSAGE_TIME, false);
-                    boolean mediaBubble = intent.getBooleanExtra(KEY_MEDIA_BUBBLE, true);
-                    boolean roundAvatar = intent.getBooleanExtra(KEY_ROUND_AVATAR, true);
+                    boolean mediaBubble = intent.getBooleanExtra(KEY_MEDIA_BUBBLE, false);
+                    boolean roundAvatar = intent.getBooleanExtra(KEY_ROUND_AVATAR, false);
+                    boolean balanceCard = intent.getBooleanExtra(KEY_BALANCE_CARD, false);
                     ctx.getSharedPreferences(PREFS, 0).edit()
                             .putBoolean(KEY_GLASS, glass)
                             .putBoolean(KEY_NATIVE_LIST, nativeList)
@@ -86,6 +91,7 @@ final class HookConfig {
                             .putBoolean(KEY_MESSAGE_TIME, messageTime)
                             .putBoolean(KEY_MEDIA_BUBBLE, mediaBubble)
                             .putBoolean(KEY_ROUND_AVATAR, roundAvatar)
+                            .putBoolean(KEY_BALANCE_CARD, balanceCard)
                             .apply();
                     com.wechatglass.m3.M3Theme.refresh();
                     android.util.Log.i("WeChatGlass", "config broadcast glass=" + glass
@@ -148,12 +154,16 @@ final class HookConfig {
 
     /** Media/sticker bubbles: on by default, independent of the list mode. */
     static boolean mediaBubbleEnabled(Context context) {
-        return boolWithModuleFallback(context, KEY_MEDIA_BUBBLE, true);
+        return boolWithModuleFallback(context, KEY_MEDIA_BUBBLE, false);
     }
 
     /** Circular sender avatars: on by default, independent of the list mode. */
+    static boolean balanceCardEnabled(Context context) {
+        return boolWithModuleFallback(context, KEY_BALANCE_CARD, false);
+    }
+
     static boolean roundAvatarEnabled(Context context) {
-        return boolWithModuleFallback(context, KEY_ROUND_AVATAR, true);
+        return boolWithModuleFallback(context, KEY_ROUND_AVATAR, false);
     }
 
     /**

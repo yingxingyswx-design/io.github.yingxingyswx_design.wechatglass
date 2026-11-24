@@ -158,9 +158,11 @@ final class HomeGlassHook {
     private GlassChipView titleChip;
     private GlassChipView searchChip;
     private GlassChipView plusChip;
+    private GlassChipView scanChip;
     private HomeCategoryBar categoryBar;
     private int barAttempts;
     private HomeCategoryPage categoryPage;
+    private M3PageHost pages;
     private android.widget.ListView homeListView;
     private View taskBarContainer;
     private boolean miniProgramShown;
@@ -191,6 +193,11 @@ final class HomeGlassHook {
             // WeChat re-shows its ActionBar on tab switches; keep ours on top
             // and the native one hidden without running the full geometry pass.
             keepNativeBarHidden();
+            if (tabMode == 0) {
+                // WeChat repaints the status strip on resume/scroll; re-clear it
+                // on the existing tick instead of hooking its setter.
+                paintStatusStrip();
+            }
             if (homeListView != null) {
                 // WeChat can replace the adapter again on resume; this is a
                 // cheap identity check, not a re-wrap.
@@ -241,6 +248,14 @@ final class HomeGlassHook {
                         : homeListView.getFirstVisiblePosition()));
                 updateTabState();
             }
+            if (decor != null && HookConfig.balanceCardEnabled(activity)) {
+                long scanNow = android.os.SystemClock.uptimeMillis();
+                if (scanNow - lastWalletScan > 2500L) {
+                    lastWalletScan = scanNow;
+                    // Passive: only reads text WeChat already rendered.
+                    WalletBalanceCache.capture(activity, decor);
+                }
+            }
             // The TaskBar header is the list's first row. The adapter swap
             // pins the list to the first conversation synchronously, so no
             // periodic correction is needed here.
@@ -249,6 +264,81 @@ final class HomeGlassHook {
         }
     };
 
+    /**
+     * The home page paints its own status-bar strip: a full-width child of the
+     * page root, exactly status-bar height, with WeChat's #EDEDED fill. The
+     * window colour is already transparent, so this view is what showed as a
+     * grey band. Paint it with our page surface so the bar reads as transparent.
+     */
+    /**
+     * WeChat paints a status-bar-height strip inside the home page in two
+     * places: one view under {@code MainUIView} (TaskBar's own strip) and one
+     * direct child of the page's {@code FrostedContentView} (MainUI.y0). Both
+     * get {@code #EDEDED}. Clearing them lets our page surface show through the
+     * status bar; the tick re-runs this because WeChat repaints on resume.
+     */
+    private void paintStatusStrip() {
+        if (decor == null || !(pagerView instanceof ViewGroup)) {
+            return;
+        }
+        try {
+            ViewGroup pager = (ViewGroup) pagerView;
+            if (pager.getChildCount() == 0) {
+                return;
+            }
+            View page = pager.getChildAt(0);
+            int status = Ui.statusBarHeight(decor);
+            clearStrips(page, status, page.getWidth(), 0);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void clearStrips(View view, int status, int pageWidth, int depth) {
+        if (view == null || depth > 9) {
+            return;
+        }
+        if (view.getWidth() > 0 && view.getHeight() > 0
+                && Math.abs(view.getHeight() - status) <= 4
+                && Math.abs(view.getWidth() - pageWidth) <= 4) {
+            android.graphics.drawable.Drawable background = view.getBackground();
+            if (background instanceof android.graphics.drawable.ColorDrawable
+                    && ((android.graphics.drawable.ColorDrawable) background).getColor()
+                    != Color.TRANSPARENT) {
+                view.setBackgroundColor(Color.TRANSPARENT);
+            }
+            return;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                clearStrips(group.getChildAt(i), status, pageWidth, depth + 1);
+            }
+        }
+    }
+
+    /**
+     * WeChat replaces the conversation page when returning from a native page
+     * (e.g. 服务). The custom list is a child of that page, so it disappears
+     * with it; put it back on the new instance instead of staying native.
+     */
+    private void ensureCategoryPage() {
+        if (activity == null || tabMode != 0 || HookConfig.nativeList(activity)) {
+            return;
+        }
+        if (categoryPage != null && categoryPage.getParent() != null) {
+            if (categoryPage.getVisibility() != View.VISIBLE) {
+                categoryPage.setVisibility(View.VISIBLE);
+            }
+            return;
+        }
+        categoryPage = null;
+        homeListView = null;
+        resolveHomeList();
+        if (homeListView != null && homeListView.getParent() instanceof ViewGroup) {
+            installCategoryPage();
+            android.util.Log.i("WeChatGlass", "HL category page re-attached");
+        }
+    }
     private void keepNativeBarHidden() {
         if (actionBar != null) {
             if (actionBar.getVisibility() != View.GONE) {
@@ -334,7 +424,11 @@ final class HomeGlassHook {
     static void reapplyStatusBar(Activity activity) {
         HomeGlassHook hook = INSTANCES.get(activity);
         if (hook != null) {
-            hook.applyStatusBar(false);
+            // Transparency is a home-tab-only behaviour; leave WeChat's own
+            // status bar colour untouched on the other tabs.
+            if (bottomTab <= 0) {
+                hook.applyStatusBar(false);
+            }
         }
     }
 
@@ -365,6 +459,43 @@ final class HomeGlassHook {
             return false;
         }
         actionBar = ab;
+        // WeChat re-shows its ActionBar on tab switches and when the TaskBar
+        // opens; the 600ms tick left a visible flash. Re-hide it the moment it
+        // is laid out again.
+        actionBar.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                if (actionBar != null && actionBar.getVisibility() != View.GONE) {
+                    actionBar.setAlpha(0f);
+                    actionBar.setVisibility(View.GONE);
+                    if (toolbar != null && toolbar != actionBar) {
+                        toolbar.setVisibility(View.GONE);
+                    }
+                }
+            }
+        });
+        // The layout listener still lets one frame through on a freshly created
+        // tab page, which showed up as WeChat's ActionBar flashing on 通讯录 /
+        // 发现. Re-hide before the frame is drawn instead.
+        final View decorView = decor;
+        decorView.getViewTreeObserver().addOnPreDrawListener(
+                new ViewTreeObserver.OnPreDrawListener() {
+                    @Override
+                    public boolean onPreDraw() {
+                        try {
+                            if (actionBar != null && actionBar.getVisibility() != View.GONE) {
+                                actionBar.setAlpha(0f);
+                                actionBar.setVisibility(View.GONE);
+                                if (toolbar != null && toolbar != actionBar) {
+                                    toolbar.setVisibility(View.GONE);
+                                }
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        return true;
+                    }
+                });
         if (pagerView == null) {
             pagerView = findViewPager(decor);
         }
@@ -374,6 +505,7 @@ final class HomeGlassHook {
         }
 
         applyStatusBar();
+        
         Ui.clearActionBarBackground(actionBar);
         Ui.transparent(toolbar);
 
@@ -435,21 +567,33 @@ final class HomeGlassHook {
         leftChip = new GlassChipView(activity, renderer, chipHeight / 2f, tint, border);
         searchChip = new GlassChipView(activity, renderer, chipHeight / 2f, tint, border);
         plusChip = new GlassChipView(activity, renderer, chipHeight / 2f, tint, border);
+        scanChip = new GlassChipView(activity, renderer, chipHeight / 2f, tint, border);
 
         leftChip.setIcon(copyIcon(leftView, Ui.isNight(activity)), Ui.dp(activity, 22f));
         searchChip.setIcon(copyIcon(searchView, Ui.isNight(activity)), Ui.dp(activity, 22f));
         plusChip.setIcon(copyIcon(plusView, Ui.isNight(activity)), Ui.dp(activity, 22f));
+        scanChip.setIcon(scanIcon(Ui.isNight(activity)), Ui.dp(activity, 22f));
         clickThrough(leftChip, leftView);
         clickThrough(searchChip, searchView);
         clickThrough(plusChip, plusView);
+        scanChip.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openScan();
+            }
+        });
         renderer.setHiddenViews(overlay);
+
 
         addChip(overlay, searchChip, chipHeight);
         addChip(overlay, plusChip, chipHeight);
+        addChip(overlay, scanChip, chipHeight);
         renderer.addSkipTarget(searchChip);
         renderer.addSkipTarget(plusChip);
+        renderer.addSkipTarget(scanChip);
         renderer.addClient(searchChip);
         renderer.addClient(plusChip);
+        renderer.addClient(scanChip);
 
         actionBar.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
@@ -488,7 +632,7 @@ final class HomeGlassHook {
         if (ov != null) {
             ov.post(new Runnable() {
                 @Override public void run() {
-                    View[] chips = {titleChip, searchChip, plusChip};
+                    View[] chips = {titleChip, searchChip, plusChip, scanChip};
                     View bg = categoryPage != null ? categoryPage : findVisibleList(decor);
                     if (bg == null) {
                         return;
@@ -529,6 +673,9 @@ final class HomeGlassHook {
             installCategoryPage();
         }
         installCategoryBar();
+        // Self-built M3E pages for 通讯录 / 发现 / 我. They mount into each tab's
+        // own page object and read the native list as their data source.
+        pages = new M3PageHost(activity, pagerView);
         // The storage objects only work after MMApplication's kernel is up, so
         // the read-only category index is built a moment after the page shows.
         final ClassLoader indexLoader = activity.getClassLoader();
@@ -556,7 +703,7 @@ final class HomeGlassHook {
             }
             final int tintColor = darkTheme ? 0x33000000 : 0x33FFFFFF;
             android.util.Log.i("WeChatGlass", "HL theme dark=" + darkTheme + " tint=" + Integer.toHexString(tintColor));
-            final View[] blurChips = {titleChip, searchChip, plusChip};
+            final View[] blurChips = {titleChip, searchChip, plusChip, scanChip};
             overlay.post(new Runnable() {
                 @Override public void run() {
                     boolean any = false;
@@ -579,6 +726,7 @@ final class HomeGlassHook {
                     overlay.bringChildToFront(titleChip);
                     overlay.bringChildToFront(searchChip);
                     overlay.bringChildToFront(plusChip);
+                    overlay.bringChildToFront(scanChip);
                     android.util.Log.i("WeChatGlass", "HL blur chips any=" + any);
                 }
             });
@@ -1124,6 +1272,19 @@ final class HomeGlassHook {
         }
 
         tabMode = mode;
+        if (pages != null) {
+            pages.show(tab);
+        }
+        // Status bar: transparent on the home tab only; the guard also rewrites
+        // WeChat's own repaint calls (HomeUI.x / ka.W0) so the strip cannot snap
+        // back to #EDEDED.
+        
+        if (tab <= 0) {
+            applyStatusBar(false);
+            // MainUI keeps a status-bar-height mask at the page top; clearing
+            // its fill is what actually makes the bar read as transparent.
+            paintStatusStrip();
+        }
         if (actionBar != null) {
             actionBar.setVisibility(View.GONE);
             actionBar.setAlpha(0f);
@@ -1154,6 +1315,7 @@ final class HomeGlassHook {
         setChipVisible(leftChip, false);
         setChipVisible(searchChip, full);
         setChipVisible(plusChip, full);
+        setChipVisible(scanChip, full);
         setChipVisible(titleChip, false);
         if (overlay != null) {
             overlay.setVisibility(full && !miniProgramShown ? View.VISIBLE : View.GONE);
@@ -1458,6 +1620,8 @@ final class HomeGlassHook {
     private boolean categoryPageFilled;
     private int lastIndexVersion = -1;
     private long lastIndexRefresh;
+    private long lastWalletScan;
+    private int tickCount;
     private static java.lang.ref.WeakReference<Object> bottomTabView;
 
     /**
@@ -1493,6 +1657,12 @@ final class HomeGlassHook {
                     @Override
                     public void open(String action) {
                         openEntry(action);
+                    }
+                },
+                new HomeCategoryPage.LongPress() {
+                    @Override
+                    public boolean open(String username) {
+                        return openNativeConversationMenu(username);
                     }
                 });
         parent.addView(categoryPage, index + 1,
@@ -1773,6 +1943,65 @@ final class HomeGlassHook {
         return null;
     }
 
+    /**
+     * Long-press on our own row forwards to WeChat's conversation menu: fill the
+     * native position for that username, then call the list's own long-click
+     * listener. No database writes by us.
+     */
+    private boolean openNativeConversationMenu(String username) {
+        try {
+            if (!(homeListView instanceof android.widget.AbsListView)) {
+                return false;
+            }
+            android.widget.AbsListView list = homeListView;
+            android.widget.ListAdapter adapter = list.getAdapter();
+            if (adapter == null) {
+                return false;
+            }
+            int position = -1;
+            for (int i = 0; i < adapter.getCount(); i++) {
+                if (username.equals(HomeConversationFilter.talkerOf(adapter, i))) {
+                    position = i;
+                    break;
+                }
+            }
+            if (position < 0) {
+                Log.i(TAG, "no native row for " + username);
+                return false;
+            }
+            View row = list.getChildAt(position - list.getFirstVisiblePosition());
+            if (row == null) {
+                list.setSelection(position);
+                row = list.getChildAt(position - list.getFirstVisiblePosition());
+            }
+            Object listener = readObjectField(list, "mOnItemLongClickListener");
+            if (listener instanceof android.widget.AdapterView.OnItemLongClickListener) {
+                return ((android.widget.AdapterView.OnItemLongClickListener) listener)
+                        .onItemLongClick(list, row, position, adapter.getItemId(position));
+            }
+            Log.i(TAG, "no native long-click listener");
+            return false;
+        } catch (Throwable throwable) {
+            Log.w(TAG, "native menu failed", throwable);
+            return false;
+        }
+    }
+
+    private static Object readObjectField(Object target, String name) {
+        Class<?> type = target.getClass();
+        while (type != null) {
+            try {
+                java.lang.reflect.Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(target);
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
     private void openChat(String username) {        try {
             android.content.Intent intent = new android.content.Intent();
             intent.setClassName(activity, "com.tencent.mm.ui.chatting.ChattingUI");
@@ -2094,7 +2323,8 @@ final class HomeGlassHook {
         top = Math.min(top, Math.max(0, height - chipHeight - Ui.dp(activity, 2f)));
 
         if (overlay != null) {
-            int overlayHeight = Math.max(height, top + chipHeight + Ui.dp(activity, 4f));
+            int overlayHeight = Math.max(height,
+                    top + chipHeight + Ui.dp(activity, 4f));
             ViewGroup.LayoutParams op = overlay.getLayoutParams();
             if (op != null && op.height != overlayHeight) {
                 op.height = overlayHeight;
@@ -2130,6 +2360,8 @@ final class HomeGlassHook {
         // switch on the left, the title gets whatever room is left.
         int plusX = width - chipHeight - Ui.dp(activity, 8f);
         int searchX = plusX - chipHeight - Ui.dp(activity, 8f);
+        // Scan sits at the left end of the right-hand group: scan | search | plus.
+        int scanX = searchX - chipHeight - Ui.dp(activity, 8f);
 
         boolean withSwitch = categoryBar != null && tabMode == 0
                 && categoryBar.getVisibility() == View.VISIBLE;
@@ -2154,7 +2386,8 @@ final class HomeGlassHook {
                 cp.gravity = Gravity.TOP | Gravity.LEFT;
             }
             boolean changed = cp.width != switchW || cp.height != chipHeight
-                    || cp.leftMargin != switchX || cp.topMargin != top;
+                    || cp.leftMargin != switchX
+                    || cp.topMargin != top;
             cp.width = switchW;
             cp.height = chipHeight;
             cp.leftMargin = switchX;
@@ -2190,8 +2423,57 @@ final class HomeGlassHook {
         applyChip(titleChip, titleX, top, titleW, chipHeight, Ui.dp(activity, 20f));
         applyChip(searchChip, searchX, top, chipHeight, chipHeight, chipHeight / 2f);
         applyChip(plusChip, plusX, top, chipHeight, chipHeight, chipHeight / 2f);
+        applyChip(scanChip, scanX, top, chipHeight, chipHeight, chipHeight / 2f);
         if (DEBUG_HIDE_OVERLAY && overlay != null) {
             overlay.setVisibility(View.GONE);
+        }
+    }
+
+    /** Scan glyph drawn in code: no resources needed inside WeChat's process. */
+    private android.graphics.drawable.Drawable scanIcon(boolean night) {
+        int size = Ui.dp(activity, 22f);
+        android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(
+                size, size, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+        android.graphics.Paint paint = new android.graphics.Paint(
+                android.graphics.Paint.ANTI_ALIAS_FLAG);
+        paint.setStyle(android.graphics.Paint.Style.STROKE);
+        paint.setStrokeWidth(Math.max(1.5f, size / 11f));
+        paint.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+        paint.setColor(night ? 0xFFF2F2F2 : 0xFF1A1A1A);
+        float inset = size * 0.16f;
+        float len = size * 0.24f;
+        float left = inset;
+        float top = inset;
+        float right = size - inset;
+        float bottom = size - inset;
+        canvas.drawLine(left, top, left + len, top, paint);
+        canvas.drawLine(left, top, left, top + len, paint);
+        canvas.drawLine(right - len, top, right, top, paint);
+        canvas.drawLine(right, top, right, top + len, paint);
+        canvas.drawLine(left, bottom - len, left, bottom, paint);
+        canvas.drawLine(left, bottom, left + len, bottom, paint);
+        canvas.drawLine(right, bottom - len, right, bottom, paint);
+        canvas.drawLine(right - len, bottom, right, bottom, paint);
+        canvas.drawLine(left + len * 0.4f, size / 2f, right - len * 0.4f, size / 2f, paint);
+        return new android.graphics.drawable.BitmapDrawable(activity.getResources(), bitmap);
+    }
+
+    /** Opens WeChat's scanner page through its own activity. */
+    private void openScan() {
+        try {
+            android.content.Intent intent = new android.content.Intent();
+            intent.setClassName(activity, "com.tencent.mm.plugin.scanner.ui.BaseScanUI");
+            intent.putExtra("key_scan_scene", 0);
+            activity.startActivity(intent);
+        } catch (Throwable throwable) {
+            Log.w(TAG, "open scan failed", throwable);
+            try {
+                if (plusView != null) {
+                    plusView.callOnClick();
+                }
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -2219,6 +2501,10 @@ final class HomeGlassHook {
     private void destroy() {
         installed = false;
         handler.removeCallbacksAndMessages(null);
+        if (pages != null) {
+            pages.destroy();
+            pages = null;
+        }
         if (renderer != null) {
             renderer.destroy();
             renderer = null;
