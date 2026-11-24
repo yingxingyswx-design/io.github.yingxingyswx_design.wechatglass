@@ -59,6 +59,10 @@ final class WalletBalanceCache {
                                 }
                                 final android.app.Activity activity =
                                         (android.app.Activity) param.thisObject;
+                                // 采样是正式功能，但只在用户显式开启余额卡片时生效。
+                                if (!HookConfig.balanceCardEnabled(activity)) {
+                                    return;
+                                }
                                 final View decor = activity.getWindow().getDecorView();
                                 decor.postDelayed(new Runnable() {
                                     @Override
@@ -95,12 +99,19 @@ final class WalletBalanceCache {
                 return;
             }
             String previous = value(context);
-            if (!value.equals(previous)) {
+            long previousTime = time(context);
+            long now = System.currentTimeMillis();
+            boolean changed = !value.equals(previous);
+            // Same amount also refreshes the timestamp, but not more than once
+            // every 20s to avoid writing prefs on every tick.
+            if (changed || now - previousTime > 20_000L) {
                 context.getSharedPreferences(PREFS, 0).edit()
                         .putString(KEY_VALUE, value)
-                        .putLong(KEY_TIME, System.currentTimeMillis())
+                        .putLong(KEY_TIME, now)
                         .apply();
-                android.util.Log.i(TAG, "balance cached: " + value);
+                if (changed) {
+                    android.util.Log.i(TAG, "balance cached: " + value);
+                }
             }
         } catch (Throwable throwable) {
             android.util.Log.w(TAG, "capture failed", throwable);

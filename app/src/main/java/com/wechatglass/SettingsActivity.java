@@ -109,6 +109,18 @@ public class SettingsActivity extends Activity {
         scroll.setClipToPadding(false);
         setContentView(scroll);
 
+        TextView versionLabel = new TextView(this);
+        versionLabel.setText("WeChat-NewUI  "
+                + io.github.yingxingyswx_design.wechatglass.BuildConfig.VERSION_NAME
+                + "  (" + io.github.yingxingyswx_design.wechatglass.BuildConfig.VERSION_CODE
+                + ")");
+        versionLabel.setTextSize(13f);
+        versionLabel.setTypeface(android.graphics.Typeface.create(
+                "monospace", android.graphics.Typeface.NORMAL));
+        versionLabel.setTextColor(onVar);
+        versionLabel.setPadding(dp(2), 0, dp(2), dp(8));
+        root.addView(versionLabel, lp(-1, -2, 0, 0));
+
         TextView disclaimer = new TextView(this);
         disclaimer.setText("本模块造成的任何后果，本模块开发者概不负责");
         disclaimer.setTextSize(20f);
