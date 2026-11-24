@@ -321,24 +321,6 @@ final class HomeGlassHook {
      * (e.g. 服务). The custom list is a child of that page, so it disappears
      * with it; put it back on the new instance instead of staying native.
      */
-    private void ensureCategoryPage() {
-        if (activity == null || tabMode != 0 || HookConfig.nativeList(activity)) {
-            return;
-        }
-        if (categoryPage != null && categoryPage.getParent() != null) {
-            if (categoryPage.getVisibility() != View.VISIBLE) {
-                categoryPage.setVisibility(View.VISIBLE);
-            }
-            return;
-        }
-        categoryPage = null;
-        homeListView = null;
-        resolveHomeList();
-        if (homeListView != null && homeListView.getParent() instanceof ViewGroup) {
-            installCategoryPage();
-            android.util.Log.i("WeChatGlass", "HL category page re-attached");
-        }
-    }
     private void keepNativeBarHidden() {
         if (actionBar != null) {
             if (actionBar.getVisibility() != View.GONE) {

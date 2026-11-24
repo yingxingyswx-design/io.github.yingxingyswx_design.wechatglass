@@ -1,47 +1,35 @@
-# WeChat-NewUI v1.2.1
+# WeChat-NewUI v1.3.0.1
 
-- versionCode：`4`
-- versionName：`1.2.1`
-- Release tag：`v.1.2.1`
-- APK：`wechat-glass-1.2.1.apk`
+- versionCode：`6`
+- versionName：`1.3.0.1`
+- Release tag：`6-1.3.0.1`
+- APK：`wechat-glass-1.3.0.1.apk`
+- 源码：`wechat-glass-1.3.0.1-source.zip`
 - 作用域：仅 `com.tencent.mm`（微信）
 
-## 这一版新增
+## 1.3.0 的内容
 
-- **两个新开关**（依赖 Material Design）：
-  - 「开启圆形头像」：关闭时头像用微信原生风格的圆角矩形；
-  - 「媒体和表情包使用消息气泡」：控制图片/表情消息是否套 M3 气泡。
-- **GUI 重排**：运行状态 → 操作 → 液态玻璃 → 聊天页液态玻璃背景壁纸 →
-  Material Design（含上面两个开关 + 每条消息发送时间）→ 动态色彩 → 冲突检测。
-- **GUI 细节**：顶部两行红色提示；透明状态栏；按钮加高；冲突检测里的原模块
-  改称「液态玻璃导航栏模块（io.github.liuran001.mmliquidglass）」。
-- **实时生效**：改圆形头像 / 媒体气泡开关会立即应用到首页与聊天页。
+- **通讯录页（M3E）**：自建单列列表，按备注拼音优先 / 无备注用昵称分区 A–Z，
+  右侧字母索引条，行采用与首页一致的胶囊卡片，点按进入微信原生资料页。
+- **发现页（M3E）**：2 列卡片网格，条目与图标全部来自微信对象，点击转发微信原生行为。
+- **我页（M3E）**：资料卡（头像形状跟随「圆形头像」开关）+ 2 列入口卡片，
+  「服务」单独占一行，点资料卡进入微信「个人资料」。
+- **微信余额卡片**（默认关闭）：只被动采样——用户自己打开「钱包」页时读取页面上
+  已渲染的金额并缓存，模块不发网络请求、不写微信数据库；卡片每 2 秒跟随本地缓存
+  刷新。开启前有红色二次确认。
+- **首页扫一扫**：顶栏右侧液态玻璃胶囊按钮，打开微信原生扫码页。
+- **首页长按会话**：转发微信原生会话菜单（置顶/未读/删除等）。
+- 首页状态栏真正透明；系统账号去重；四个 tab 统一 `surface` 背景。
+- Material Design 组默认全部关闭；GUI 顶部红色免责声明。
 
-## 修复
+## 1.3.0.1 修复
 
-- **GIF 表情包卡顿**：动态 drawable 不再被 `RoundedRectClipDrawable` 包装，恢复流畅播放。
-- **Home 头像永久圆形**：自建列表头像现在跟随「开启圆形头像」开关。
-- 聊天页液态玻璃面板每次打开立即重绘（不再只有首次是玻璃），去掉白色叠加。
-- 媒体/表情消息气泡按面积 +25% 外扩、居中、保留小尾巴；贴纸圆角改为 drawable 裁剪。
-- 每条消息时间胶囊开关真正生效（关闭即移除）。
-- 自建会话列表未读/已读实时刷新（后台每 2.5s 重读会话表）。
+- **移除遗留的探测型高风险 hook**：删掉 `hookFreGriest`
+  （对 `android$net$FreGriest` 的 `hookAllMethods` + `setResult`，每次启动都会
+  ClassNotFoundException，属于探索期实验代码），以及未使用的 `ensureCategoryPage()`。
+- **发现页条目不全**：此前只在 adapter 实例变化时重建列表，微信「发现页管理」里
+  重新开启的入口不会出现；现在同时比较条目数量，变化即重建。
 
-## 已知问题
+## 已知问题（下一版修复）
 
-- 聊天页液态玻璃**必须先在模块 App 内手动选择壁纸**，否则聊天页没有玻璃效果。
-- 模块按微信 8.0.79 的类名/资源 id 适配，微信升级后可能失效。
-- 自建会话列表为实验功能，默认走微信原生列表。
-
-## 安装
-
-```powershell
-adb install -r .\wechat-glass-1.2.1.apk
-adb shell am force-stop --user 0 com.tencent.mm
-adb shell am start --user 0 -n com.tencent.mm/.ui.LauncherUI
-```
-
-## 特别鸣谢
-
-- [liuran001/WeChat-LiquidGlass](https://github.com/liuran001/WeChat-LiquidGlass)（MIT）：
-  底部导航液态玻璃、水滴拖拽与弹簧动效。完整许可见
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 从「服务」等原生页面返回后，首页可能掉回微信原生列表。

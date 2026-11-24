@@ -49,7 +49,6 @@ public class HookEntry implements IXposedHookLoadPackage {
 
     private static void hookChatLifecycle(final XC_LoadPackage.LoadPackageParam lpparam) {
         hookPanelBgMethods(lpparam.classLoader);
-        hookFreGriest(lpparam.classLoader);
         XposedHelpers.findAndHookMethod(CHATTING_UI, lpparam.classLoader, "onCreate",
                 Bundle.class, new XC_MethodHook() {
                     @Override
@@ -461,42 +460,6 @@ private static void hookPanelBgMethods(ClassLoader cl) { // hookPanelBgMethods
 
 
     private static final java.util.HashSet<String> SEEN_BG = new java.util.HashSet<>();
-private static void hookFreGriest(ClassLoader cl) { // hookFreGriest
-        try {
-            Class<?> c = de.robv.android.xposed.XposedHelpers.findClass(
-                    "android$net$FreGriest", cl);
-            de.robv.android.xposed.XposedBridge.hookAllMethods(c, "setBackgroundResource",
-                    new de.robv.android.xposed.XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.thisObject instanceof android.view.View
-                                    && inPanel((android.view.View) p.thisObject)) {
-                                p.setResult(null);
-                                android.util.Log.i("WeChatGlass", "CB block FreGriest bg");
-                            }
-                        }
-                    });
-            de.robv.android.xposed.XposedBridge.hookAllMethods(c, "setBackground",
-                    new de.robv.android.xposed.XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.thisObject instanceof android.view.View
-                                    && inPanel((android.view.View) p.thisObject)) {
-                                p.setResult(null);
-                            }
-                        }
-                    });
-            de.robv.android.xposed.XposedBridge.hookAllMethods(c, "setBackgroundColor",
-                    new de.robv.android.xposed.XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.thisObject instanceof android.view.View
-                                    && inPanel((android.view.View) p.thisObject)) {
-                                p.setResult(null);
-                            }
-                        }
-                    });
-        } catch (Throwable t) {
-            android.util.Log.e("WeChatGlass", "CB FreGriest hook fail", t);
-        }
-    }
 
 
     private static boolean SHADOW_HOOKED;

@@ -40,6 +40,8 @@ class M3GridPage extends M3PageBase {
     private ListAdapter nativeAdapter;
     /** Last seen state of the balance-card switch, to rebuild on change. */
     private boolean lastBalanceEnabled;
+    /** Adapter item count at the last rebuild; 发现 entries change with settings. */
+    private int lastAdapterCount = -1;
 
     M3GridPage(Context context, String title, int mode) {
         super(context, title);
@@ -69,6 +71,9 @@ class M3GridPage extends M3PageBase {
                     && HookConfig.balanceCardEnabled(getContext());
             if (balance != lastBalanceEnabled) {
                 lastBalanceEnabled = balance;
+                rebuild();
+            } else if (adapter.getCount() != lastAdapterCount) {
+                // 发现页的条目随微信「发现页管理」开关增减；同一 adapter 也要重建。
                 rebuild();
             }
             return true;
@@ -142,6 +147,7 @@ class M3GridPage extends M3PageBase {
         }
         addPairs(rows, pending);
         lastBalanceEnabled = mode == ME && HookConfig.balanceCardEnabled(getContext());
+        lastAdapterCount = nativeAdapter == null ? -1 : nativeAdapter.getCount();
         adapter.notifyDataSetChanged();
     }
 
