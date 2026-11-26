@@ -827,45 +827,93 @@ final class ChatGlassHook {
 
     private void loadWallpaper() {
         try {
-            android.graphics.Bitmap viaProvider = wallpaperFromProvider();
-            if (viaProvider != null) {
-                com.wechatglass.liquid.LiquidPanelFactory.setWallpaper(viaProvider);
-                android.util.Log.i("WeChatGlass", "CB wallpaper provider "
-                        + viaProvider.getWidth() + "x" + viaProvider.getHeight());
+            android.graphics.Bitmap picked = wallpaperFromProvider();
+            if (picked == null) {
+                String cfg = readConfig("wallpaper_uri");
+                if (cfg != null && !cfg.isEmpty()) {
+                    java.io.InputStream cin = activity.getContentResolver()
+                            .openInputStream(android.net.Uri.parse(cfg));
+                    picked = android.graphics.BitmapFactory.decodeStream(cin);
+                    if (cin != null) cin.close();
+                }
+            }
+            if (picked != null) {
+                // An explicit pick in the module wins over WeChat's own setting.
+                com.wechatglass.liquid.LiquidPanelFactory.setWallpaper(picked);
+                android.util.Log.i("WeChatGlass", "CB wallpaper picked "
+                        + picked.getWidth() + "x" + picked.getHeight());
                 return;
             }
-            String cfg = readConfig("wallpaper_uri");
-            if (cfg != null && !cfg.isEmpty()) {
-                java.io.InputStream cin = activity.getContentResolver()
-                        .openInputStream(android.net.Uri.parse(cfg));
-                android.graphics.Bitmap cb = android.graphics.BitmapFactory.decodeStream(cin);
-                if (cin != null) cin.close();
-                if (cb != null) {
-                    com.wechatglass.liquid.LiquidPanelFactory.setWallpaper(cb);
-                    android.util.Log.i("WeChatGlass", "CB wallpaper provider " + cb.getWidth() + "x" + cb.getHeight());
-                    return;
-                }
+            if (applyChatBackground()) {
+                return;
             }
-            android.net.Uri uri = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-            android.database.Cursor c = activity.getContentResolver().query(uri,
-                    new String[]{android.provider.MediaStore.Images.Media._ID},
-                    null, null, android.provider.MediaStore.Images.Media.DATE_ADDED + " DESC");
-            if (c == null) return;
-            try {
-                if (!c.moveToFirst()) return;
-                long id = c.getLong(0);
-                android.net.Uri img = android.content.ContentUris.withAppendedId(uri, id);
-                java.io.InputStream in = activity.getContentResolver().openInputStream(img);
-                android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeStream(in);
-                if (in != null) in.close();
-                if (bmp != null) {
-                    com.wechatglass.liquid.LiquidPanelFactory.setWallpaper(bmp);
-                    android.util.Log.i("WeChatGlass", "CB wallpaper loaded " + bmp.getWidth() + "x" + bmp.getHeight());
-                }
-            } finally { c.close(); }
+            android.util.Log.i("WeChatGlass", "CB wallpaper none");
         } catch (Throwable t) {
             android.util.Log.e("WeChatGlass", "CB wallpaper fail", t);
         }
+    }
+
+    /**
+     * Follows the background WeChat already rendered instead of asking the user
+     * for a wallpaper: the chat page paints it with {@code ChattingImageBGView}
+     * (an {@code ImageView} holding a {@link android.graphics.drawable.BitmapDrawable}),
+     * or leaves a solid colour on {@code ChattingContent} when the user picked
+     * none. Read-only and free of any WeChat API call.
+     */
+    private boolean applyChatBackground() {
+        View content = chatContentGroup;
+        if (content == null) {
+            return false;
+        }
+        android.graphics.Bitmap bitmap = backgroundBitmap(content, 0, content);
+        if (bitmap != null && !bitmap.isRecycled()) {
+            com.wechatglass.liquid.LiquidPanelFactory.setWallpaper(bitmap);
+            android.util.Log.i("WeChatGlass", "CB wallpaper auto image "
+                    + bitmap.getWidth() + "x" + bitmap.getHeight());
+            return true;
+        }
+        android.graphics.drawable.Drawable bg = content.getBackground();
+        if (bg instanceof android.graphics.drawable.ColorDrawable) {
+            int color = ((android.graphics.drawable.ColorDrawable) bg).getColor();
+            android.graphics.Bitmap solid = android.graphics.Bitmap.createBitmap(
+                    2, 2, android.graphics.Bitmap.Config.ARGB_8888);
+            solid.eraseColor(color);
+            com.wechatglass.liquid.LiquidPanelFactory.setWallpaper(solid);
+            android.util.Log.i("WeChatGlass", "CB wallpaper auto color #"
+                    + Integer.toHexString(color));
+            return true;
+        }
+        return false;
+    }
+
+    private android.graphics.Bitmap backgroundBitmap(View view, int depth, View content) {
+        if (view == null || depth > 6) {
+            return null;
+        }
+        if (view instanceof android.widget.ImageView) {
+            android.graphics.drawable.Drawable drawable =
+                    ((android.widget.ImageView) view).getDrawable();
+            if (drawable instanceof android.graphics.drawable.BitmapDrawable) {
+                android.graphics.Bitmap bitmap =
+                        ((android.graphics.drawable.BitmapDrawable) drawable).getBitmap();
+                if (bitmap != null && !bitmap.isRecycled()
+                        && view.getWidth() >= content.getWidth() * 0.9f
+                        && view.getHeight() >= content.getHeight() * 0.9f) {
+                    return bitmap;
+                }
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.graphics.Bitmap found =
+                        backgroundBitmap(group.getChildAt(i), depth + 1, content);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     private void scanWallpaperConfig() {

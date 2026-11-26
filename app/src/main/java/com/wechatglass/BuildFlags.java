@@ -17,11 +17,7 @@ final class BuildFlags {
     }
 
     static String versionName() {
-        try {
-            return io.github.yingxingyswx_design.wechatglass.BuildConfig.VERSION_NAME;
-        } catch (Throwable throwable) {
-            return "";
-        }
+        return ModuleVersion.NAME;
     }
 
     /** True when the version name marks this as a release build. */

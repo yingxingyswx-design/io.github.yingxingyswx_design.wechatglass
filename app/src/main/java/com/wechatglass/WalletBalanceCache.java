@@ -34,8 +34,13 @@ final class WalletBalanceCache {
     /** 我 → 服务：a full activity that already renders 「钱包 ¥0.00」. */
     private static final String MALL_UI =
             "com.tencent.mm.plugin.mall.ui.MallIndexUIv2";
-    private static final Pattern MONEY =
-            Pattern.compile("^[¥￥]?\\s?[0-9][0-9,]*(\\.[0-9]{1,2})?$");
+    /** Amount with a currency symbol: always a balance, never a badge count. */
+    private static final Pattern MONEY_SYMBOL =
+            Pattern.compile("^[¥￥]\\s?[0-9][0-9,]*(\\.[0-9]{1,2})?$");
+    /** Amount without a symbol: only accepted next to a wallet word, and it must
+     *  look like money ("0.00"), so badges like "1" can never be cached. */
+    private static final Pattern MONEY_PLAIN =
+            Pattern.compile("^[0-9][0-9,]*\\.[0-9]{2}$");
 
     private WalletBalanceCache() {
     }
@@ -91,10 +96,12 @@ final class WalletBalanceCache {
         try {
             Texts texts = new Texts();
             collect(decor, texts, 0);
-            if (!texts.sawWalletWord) {
-                return;
-            }
-            String value = texts.firstMoney;
+            // A "¥0.40" amount is enough on its own: WeChat renders the wallet
+            // page in the app language, so matching 「钱包/零钱」 alone misses
+            // English ("Balance") and any other locale.
+            String value = texts.symbolMoney != null
+                    ? texts.symbolMoney
+                    : (texts.sawWalletWord ? texts.plainMoney : null);
             if (value == null) {
                 return;
             }
@@ -135,7 +142,8 @@ final class WalletBalanceCache {
     }
     private static final class Texts {
         boolean sawWalletWord;
-        String firstMoney;
+        String symbolMoney;
+        String plainMoney;
         final StringBuilder sample = new StringBuilder();
     }
 
@@ -152,9 +160,10 @@ final class WalletBalanceCache {
             if (out.sample.length() < 400) {
                 out.sample.append(text).append('|');
             }
-            Matcher matcher = MONEY.matcher(text);
-            if (matcher.matches() && out.firstMoney == null) {
-                out.firstMoney = text;
+            if (out.symbolMoney == null && MONEY_SYMBOL.matcher(text).matches()) {
+                out.symbolMoney = text;
+            } else if (out.plainMoney == null && MONEY_PLAIN.matcher(text).matches()) {
+                out.plainMoney = text;
             }
         }
         if (view instanceof ViewGroup) {

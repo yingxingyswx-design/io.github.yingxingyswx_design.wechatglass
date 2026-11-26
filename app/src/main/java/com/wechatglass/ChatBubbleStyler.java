@@ -142,6 +142,7 @@ final class ChatBubbleStyler {
         final int right;
         final int bottom;
         int extraTop;
+        int extraBottom;
 
         MessageTimePadding(View view) {
             left = view.getPaddingLeft();
@@ -486,6 +487,13 @@ final class ChatBubbleStyler {
         View parent = target.getParent() instanceof View
                 ? (View) target.getParent() : null;
         View bubble = parent != null && parent != item ? parent : null;
+        if (bubble instanceof ViewGroup
+                && containsSenderName((ViewGroup) bubble, target)) {
+            // Group chats put the sender name inside the same container as the
+            // message. Bubbling that container paints the name too, so wrap only
+            // the content view instead.
+            bubble = target;
+        }
         if (bubble == null) {
             bubble = item.findViewById(ID_BKJ);
         }
@@ -712,14 +720,19 @@ final class ChatBubbleStyler {
             padding = new MessageTimePadding(item);
             MESSAGE_TIME_PADDING.put(item, padding);
         }
-        int baseAnchorTop = Math.max(0, anchorBounds.top - padding.extraTop);
-        int neededTop = Math.max(0, labelHeight + gap - baseAnchorTop);
-        int extraTop = Math.max(padding.extraTop, neededTop);
-        if (extraTop != padding.extraTop) {
+        // The label sits *under* the bubble: group chats print the sender name
+        // directly above the bubble, so a label on top used to cover that name.
+        int anchorBottom = anchorBounds.bottom + padding.extraBottom;
+        int neededBottom = Math.max(0, anchorBottom + gap + labelHeight
+                - (item.getHeight() - padding.bottom));
+        int extraBottom = Math.max(padding.extraBottom, neededBottom);
+        int extraTop = 0;
+        if (extraBottom != padding.extraBottom || extraTop != padding.extraTop) {
             remember(item);
+            padding.extraBottom = extraBottom;
             padding.extraTop = extraTop;
             item.setPadding(padding.left, padding.top + extraTop,
-                    padding.right, padding.bottom);
+                    padding.right, padding.bottom + extraBottom);
             item.requestLayout();
             final View timeAnchor = anchor;
             final View timeAvatar = avatar;
@@ -738,9 +751,9 @@ final class ChatBubbleStyler {
                 > context.getResources().getDisplayMetrics().widthPixels / 2;
         int x = outgoing
                 ? anchorBounds.right - labelWidth : anchorBounds.left;
-        int y = anchorBounds.top - labelHeight - gap;
-        if (y < 0) {
-            y = 0;
+        int y = anchorBounds.bottom + gap;
+        if (y + labelHeight > overlayHost.getHeight()) {
+            y = Math.max(0, overlayHost.getHeight() - labelHeight);
         }
         x = Math.max(0, Math.min(x, Math.max(0, overlayHost.getWidth() - labelWidth)));
         y = Math.max(0, Math.min(y, Math.max(0, overlayHost.getHeight() - labelHeight)));
@@ -1752,7 +1765,9 @@ final class ChatBubbleStyler {
 
     private static View findBubbleTarget(View view, View item, View avatar,
                                         Context context, View best, int bestScore) {
-        if (view == null) {
+        if (view == null || avatar == null) {
+            // No avatar means this row is a system notice (recall, time, 拍一拍…),
+            // never a message bubble.
             return best;
         }
         boolean neat = view.getClass().getName().contains("MMNeat7extView")
@@ -1773,7 +1788,8 @@ final class ChatBubbleStyler {
                     && tv.getVisibility() == View.VISIBLE
                     && tv.getWidth() > 0 && tv.getHeight() > 0
                     && isCompactMessageText(tv, item, avatar, context)
-                    && !isChromeText(cs.toString())) {
+                    && !isChromeText(cs.toString())
+                    && !isSenderNameLabel(tv)) {
                 int score = bubbleTargetScore(tv);
                 if (score > bestScore) {
                     best = tv;
@@ -1795,6 +1811,48 @@ final class ChatBubbleStyler {
         return best;
     }
 
+    /**
+     * Group chats print the sender's nickname above the bubble. It is a plain
+     * {@link TextView} sitting next to the real content view (a MMNeat7extView /
+     * emoji / image / video view), so it must never be treated as message text.
+     */
+    /** True when {@code group} holds the sender name next to the content view. */
+    private static boolean containsSenderName(ViewGroup group, View target) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child == target || !(child instanceof TextView)) {
+                continue;
+            }
+            if (isSenderNameLabel((TextView) child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private static boolean isSenderNameLabel(TextView candidate) {
+        String own = candidate.getClass().getName();
+        if (own.contains("MMNeat7extView") || own.contains("NeatTextView")) {
+            return false;
+        }
+        android.view.ViewParent parent = candidate.getParent();
+        if (!(parent instanceof ViewGroup)) {
+            return false;
+        }
+        ViewGroup group = (ViewGroup) parent;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child == candidate) {
+                continue;
+            }
+            String name = child.getClass().getName();
+            if (name.contains("MMNeat7extView") || name.contains("Emoji")
+                    || name.contains("Image") || name.contains("Video")
+                    || name.contains("Record") || name.contains("Voice")) {
+                return true;
+            }
+        }
+        return false;
+    }
     private static boolean isCompactMessageText(View candidate, View item,
                                                 View avatar, Context context) {
         if (candidate == item || candidate == avatar

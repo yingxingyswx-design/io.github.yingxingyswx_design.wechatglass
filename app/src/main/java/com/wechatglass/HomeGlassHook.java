@@ -248,6 +248,7 @@ final class HomeGlassHook {
                         : homeListView.getFirstVisiblePosition()));
                 updateTabState();
             }
+            refreshNativeBars();
             if (decor != null && HookConfig.balanceCardEnabled(activity)) {
                 long scanNow = android.os.SystemClock.uptimeMillis();
                 if (scanNow - lastWalletScan > 2500L) {
@@ -414,6 +415,36 @@ final class HomeGlassHook {
         }
     }
 
+    /**
+     * WeChat re-shows its ActionBar on some tab switches and rebuilds it with a
+     * new page, which is why 通讯录/发现 occasionally showed the native bar. Runs
+     * every tick: re-resolve the bar when the old instance detached, then force
+     * it gone before it can paint.
+     */
+    private void refreshNativeBars() {
+        try {
+            if (actionBar == null || actionBar.getParent() == null
+                    || !actionBar.isAttachedToWindow()) {
+                View ab = Ui.findByClass(decor, "androidx.appcompat.widget.ActionBarContainer");
+                if (ab != null) {
+                    actionBar = ab;
+                    toolbar = Ui.findByClass(ab, "androidx.appcompat.widget.Toolbar");
+                    if (toolbar == null) {
+                        toolbar = ab;
+                    }
+                }
+            }
+            if (actionBar != null && actionBar.getVisibility() != View.GONE) {
+                actionBar.setAlpha(0f);
+                actionBar.setVisibility(View.GONE);
+            }
+            if (toolbar != null && toolbar != actionBar
+                    && toolbar.getVisibility() != View.GONE) {
+                toolbar.setVisibility(View.GONE);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
     private void install() {
         decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
         if (decor == null) {
@@ -465,16 +496,10 @@ final class HomeGlassHook {
                 new ViewTreeObserver.OnPreDrawListener() {
                     @Override
                     public boolean onPreDraw() {
-                        try {
-                            if (actionBar != null && actionBar.getVisibility() != View.GONE) {
-                                actionBar.setAlpha(0f);
-                                actionBar.setVisibility(View.GONE);
-                                if (toolbar != null && toolbar != actionBar) {
-                                    toolbar.setVisibility(View.GONE);
-                                }
-                            }
-                        } catch (Throwable ignored) {
-                        }
+                        // WeChat sometimes attaches the bar for a freshly built
+                        // tab page only after the switch, so re-resolve it and
+                        // hide it before this frame is drawn.
+                        refreshNativeBars();
                         return true;
                     }
                 });

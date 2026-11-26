@@ -12,14 +12,14 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="微信悬浮玻璃栏"
+        android:label="微信NewUI"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
             android:name="com.wechatglass.SettingsActivity"
             android:exported="true"
-            android:label="WeChat NewUI">
+            android:label="微信NewUI">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -31,7 +31,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="微信聊天页：顶部三段悬浮毛玻璃导航栏 + 底部悬浮毛玻璃输入栏（仅 UI，不含通讯/支付逻辑）" />
+            android:value="微信 NewUI：M3E 通讯录/发现/我 + 液态玻璃首页与聊天页（仅界面，不含通讯/支付逻辑）" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />

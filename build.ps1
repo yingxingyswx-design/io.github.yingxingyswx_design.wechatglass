@@ -5,6 +5,20 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# Version comes from the Gradle file so the APK name, the manifest and the
+# backup commit message never drift apart.
+$version = '0.0'
+$versionCode = 1
+$gradleFile = Join-Path $root 'app\build.gradle.kts'
+if (Test-Path $gradleFile) {
+    $m = Select-String -Path $gradleFile -Pattern 'versionName\s*=\s*"([^"]+)"' |
+        Select-Object -First 1
+    if ($m) { $version = $m.Matches[0].Groups[1].Value }
+    $m = Select-String -Path $gradleFile -Pattern 'versionCode\s*=\s*(\d+)' |
+        Select-Object -First 1
+    if ($m) { $versionCode = [int]$m.Matches[0].Groups[1].Value }
+}
 $stage = 'C:\wcg_build'
 $app = Join-Path $stage 'app\src\main'
 $build = Join-Path $stage 'build'
@@ -12,6 +26,21 @@ $out = Join-Path $root 'out'
 $sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
 $androidJar = Join-Path $sdk 'platforms\android-36\android.jar'
 $bt = Join-Path $sdk 'build-tools\36.0.0'
+# ModuleVersion.java must agree with app/build.gradle.kts; both build systems
+# verify it so an APK can never claim a version it was not built as.
+$versionJava = Join-Path $root 'app\src\main\java\com\wechatglass\ModuleVersion.java'
+if (Test-Path $versionJava) {
+    $text = Get-Content $versionJava -Raw -Encoding UTF8
+    $m = [regex]::Match($text, 'NAME\s*=\s*"([^"]+)"')
+    $c2 = [regex]::Match($text, 'CODE\s*=\s*(\d+)')
+    if ($m.Success -and $c2.Success) {
+        if ($m.Groups[1].Value -ne $version -or [int]$c2.Groups[1].Value -ne $versionCode) {
+            throw "ModuleVersion.java ($($m.Groups[1].Value)/$($c2.Groups[1].Value)) does not match build.gradle.kts ($version/$versionCode)"
+        }
+    } else {
+        throw 'ModuleVersion.java is missing NAME/CODE'
+    }
+}
 if (!(Test-Path $androidJar)) { throw "android.jar not found: $androidJar" }
 
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
@@ -44,7 +73,7 @@ Write-Host '=== aapt2 link ==='
     --auto-add-overlay `
     -A "$app\assets" `
     --min-sdk-version 24 --target-sdk-version 34 `
-    --version-code 2 --version-name 1.1
+    --version-code $versionCode --version-name $version
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 link failed' }
 
 Write-Host '=== javac ==='
@@ -136,14 +165,25 @@ if ($DebugSigning) {
 }
 
 Write-Host '=== sign ==='
-$final = Join-Path $build 'wechat-glass-1.1.apk'
+$final = Join-Path $build "wechat-glass-$version.apk"
 & "$bt\apksigner.bat" sign --ks $keystore --ks-pass "pass:$storePass" `
     --key-pass "pass:$keyPass" --out $final "$build\aligned.apk"
 if ($LASTEXITCODE -ne 0) { throw 'apksigner failed' }
 
 Write-Host '=== verify ==='
 & "$bt\apksigner.bat" verify --print-certs $final
-$published = Join-Path $out 'wechat-glass-1.1.apk'
+$published = Join-Path $out "wechat-glass-$version.apk"
 Copy-Item $final $published -Force
 Write-Host "APK: $published"
 Get-Item $published | Select-Object Length, FullName
+
+# Hard rule: a successful build must be committed to the backup repo.
+# Runs after the APK is in out/; a failure here fails the whole build.
+Write-Host '=== backup to C:\git\wechat_chat_ui ==='
+$publishScript = Join-Path $root 'publish.ps1'
+if (!(Test-Path $publishScript)) { throw "publish.ps1 not found: $publishScript" }
+$stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $publishScript `
+    -Message "build: auto backup $version @ $stamp"
+if ($LASTEXITCODE -ne 0) { throw 'backup to C:\git\wechat_chat_ui failed' }
+Write-Host "backup: done ($version @ $stamp)"

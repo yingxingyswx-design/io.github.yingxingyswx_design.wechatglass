@@ -1,3 +1,6 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+
 plugins {
     id("com.android.application")
 }
@@ -14,8 +17,8 @@ android {
         applicationId = "io.github.yingxingyswx_design.wechatglass"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.3.1.2.release"
+        versionCode = 12
+        versionName = "1.3.4.release"
     }
 
     compileOptions {
@@ -60,7 +63,7 @@ dependencies {
 val copyApk = tasks.register<Copy>("copyApk") {
     from(layout.buildDirectory.file("outputs/apk/release/app-release.apk"))
     into(rootProject.layout.projectDirectory.dir("out"))
-    rename { "wechat-glass-1.3.1.2.apk" }
+    rename { "wechat-glass-1.3.4.apk" }
 }
 
 // Every release ships the source archive next to the APK.
@@ -79,12 +82,49 @@ val sourceZip = tasks.register<Zip>("sourceZip") {
         "THIRD_PARTY_NOTICES.md").forEach { name ->
         from(rootProject.file(name))
     }
-    archiveFileName.set("wechat-glass-1.3.1.2-source.zip")
+    archiveFileName.set("wechat-glass-1.3.4-source.zip")
     destinationDirectory.set(rootProject.layout.projectDirectory.dir("out"))
     isPreserveFileTimestamps = false
     isReproducibleFileOrder = true
 }
 
+// The version also lives in ModuleVersion.java (build.ps1 has no BuildConfig),
+// so both must agree or the build stops.
+val verifyModuleVersion = tasks.register("verifyModuleVersion") {
+    doLast {
+        val expected = android.defaultConfig.versionName
+        val expectedCode = android.defaultConfig.versionCode
+        val source = rootProject.file(
+            "app/src/main/java/com/wechatglass/ModuleVersion.java").readText()
+        val name = Regex("NAME\\s*=\\s*\"([^\"]+)\"").find(source)?.groupValues?.get(1)
+        val code = Regex("CODE\\s*=\\s*(\\d+)").find(source)?.groupValues?.get(1)?.toInt()
+        if (name != expected || code != expectedCode) {
+            throw GradleException("ModuleVersion.java (/) does not match" +
+                " build.gradle.kts (/)")
+        }
+    }
+}
 tasks.matching { it.name == "assembleRelease" }.configureEach {
+    dependsOn(verifyModuleVersion)
     finalizedBy(copyApk)
+    // Hard rule: a successful build must be backed up into the git repo.
+    // doLast only runs when the task actually succeeded, so a failed compile
+    // never commits a half state.
+    doLast {
+        val script = rootProject.file("publish.ps1")
+        if (!script.exists()) {
+            throw GradleException("publish.ps1 not found: ${script.absolutePath}")
+        }
+        val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
+        val appVersion = android.defaultConfig.versionName ?: "unknown"
+        val message = "build: 自动备份 $appVersion @ $stamp"
+        println("backup -> C:\\git\\wechat_chat_ui   ($message)")
+        val process = ProcessBuilder(
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", script.absolutePath, "-Message", message
+        ).directory(rootProject.projectDir).inheritIO().start()
+        if (process.waitFor() != 0) {
+            throw GradleException("backup to C:\\git\\wechat_chat_ui failed")
+        }
+    }
 }
